@@ -1,5 +1,9 @@
 
+#ifdef SIMULATOR_HEADLESS
+#include "SimHeadless.h"
+#else
 #include <SDL.h>
+#endif
 #include <unistd.h>
 
 #include "Arduino.h"

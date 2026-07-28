@@ -1,7 +1,12 @@
 #include "HalDisplay.h"
 
 #include <GfxRenderer.h>
+#ifdef SIMULATOR_HEADLESS
+#include "SimHeadless.h"
+#else
 #include <SDL.h>
+#endif
+#include <cstdio>
 
 #include <array>
 #include <atomic>
@@ -11,9 +16,11 @@
 #include <string>
 #include <vector>
 
+#ifndef SIMULATOR_HEADLESS
 static SDL_Window *window = nullptr;
 static SDL_Renderer *sdl_renderer = nullptr;
 static SDL_Texture *texture = nullptr;
+#endif
 // Render the simulator at full panel size. The previous 0.5x window was too
 // small. With 1:1 pixel mapping, the simulator can be used for testing fine
 // details.
@@ -30,6 +37,8 @@ std::atomic<bool> quitRequested{false};
 
 static int currentWindowWidth = 0;
 static int currentWindowHeight = 0;
+
+extern GfxRenderer renderer;
 
 namespace {
 
@@ -97,6 +106,88 @@ bool hasDueScreenshot() {
   return false;
 }
 
+#ifdef SIMULATOR_HEADLESS
+
+// Software screenshot. The SDL path reads pixels back from the renderer, which
+// has already applied the orientation rotation; headless has to do that itself.
+//
+// Emitted at LOGICAL size (480x800 portrait, 800x480 landscape), not the 2x the
+// SDL path produces. That 2x is not a deliberate scale — SIMULATOR_WINDOW_SCALE
+// is 1 — it comes from SDL_WINDOW_ALLOW_HIGHDPI giving a Retina drawable, so it
+// silently depends on the developer's monitor. The gates compare aspect ratios
+// and relative geometry rather than absolute pixels, so logical size is both
+// correct and more reproducible.
+bool writeBmp(const std::string &path, const uint32_t *argb, int w, int h) {
+  FILE *fp = fopen(path.c_str(), "wb");
+  if (!fp) {
+    std::cerr << "[SIM] Cannot open screenshot " << path << std::endl;
+    return false;
+  }
+  // 24-bit BGR, bottom-up, rows padded to 4 bytes — the plainest BMP there is.
+  const int rowBytes = ((w * 3) + 3) & ~3;
+  const uint32_t dataSize = static_cast<uint32_t>(rowBytes) * h;
+  const uint32_t fileSize = 54 + dataSize;
+  uint8_t header[54] = {};
+  header[0] = 'B'; header[1] = 'M';
+  memcpy(&header[2], &fileSize, 4);
+  const uint32_t offset = 54;
+  memcpy(&header[10], &offset, 4);
+  const uint32_t dibSize = 40;
+  memcpy(&header[14], &dibSize, 4);
+  memcpy(&header[18], &w, 4);
+  memcpy(&header[22], &h, 4);
+  const uint16_t planes = 1, bpp = 24;
+  memcpy(&header[26], &planes, 2);
+  memcpy(&header[28], &bpp, 2);
+  memcpy(&header[34], &dataSize, 4);
+  fwrite(header, 1, sizeof(header), fp);
+
+  std::vector<uint8_t> row(rowBytes, 0);
+  for (int y = h - 1; y >= 0; y--) {  // bottom-up
+    for (int x = 0; x < w; x++) {
+      const uint32_t p = argb[static_cast<size_t>(y) * w + x];
+      row[x * 3 + 0] = static_cast<uint8_t>(p & 0xFF);          // B
+      row[x * 3 + 1] = static_cast<uint8_t>((p >> 8) & 0xFF);   // G
+      row[x * 3 + 2] = static_cast<uint8_t>((p >> 16) & 0xFF);  // R
+    }
+    fwrite(row.data(), 1, rowBytes, fp);
+  }
+  fclose(fp);
+  std::cerr << "[SIM] Saved screenshot: " << path << std::endl;
+  return true;
+}
+
+bool saveRendererBmp(const std::string &path) {
+  const GfxRenderer::Orientation orientation = ::renderer.getOrientation();
+  constexpr int W = HalDisplay::DISPLAY_WIDTH;
+  constexpr int H = HalDisplay::DISPLAY_HEIGHT;
+
+  // Same rotations the SDL path asks RenderCopyEx for: Portrait +90 (CW),
+  // PortraitInverted -90 (CCW), LandscapeClockwise 180, otherwise none.
+  int outW = W, outH = H;
+  const bool portrait = orientation == GfxRenderer::Portrait ||
+                        orientation == GfxRenderer::PortraitInverted;
+  if (portrait) { outW = H; outH = W; }
+
+  std::vector<uint32_t> out(static_cast<size_t>(outW) * outH);
+  for (int Y = 0; Y < outH; Y++) {
+    for (int X = 0; X < outW; X++) {
+      int sx, sy;
+      switch (orientation) {
+      case GfxRenderer::Portrait:          sx = Y;             sy = H - 1 - X; break;
+      case GfxRenderer::PortraitInverted:  sx = W - 1 - Y;     sy = X;         break;
+      case GfxRenderer::LandscapeClockwise:sx = W - 1 - X;     sy = H - 1 - Y; break;
+      default:                             sx = X;             sy = Y;         break;
+      }
+      out[static_cast<size_t>(Y) * outW + X] =
+          pixelBuf[static_cast<size_t>(sy) * W + sx];
+    }
+  }
+  return writeBmp(path, out.data(), outW, outH);
+}
+
+#else
+
 bool saveRendererBmp(const std::string &path) {
   int width = 0;
   int height = 0;
@@ -134,6 +225,8 @@ bool saveRendererBmp(const std::string &path) {
   SDL_FreeSurface(surface);
   return saved;
 }
+
+#endif
 
 void captureDueScreenshots() {
   const unsigned long now = millis();
@@ -240,6 +333,10 @@ static void getLogicalWindowSize(GfxRenderer::Orientation orientation,
 }
 
 static void applyWindowGeometryIfNeeded(GfxRenderer::Orientation orientation) {
+#ifdef SIMULATOR_HEADLESS
+  (void)orientation;  // no window to resize
+  return;
+#else
   if (!window || !sdl_renderer)
     return;
 
@@ -253,6 +350,7 @@ static void applyWindowGeometryIfNeeded(GfxRenderer::Orientation orientation) {
   SDL_RenderSetLogicalSize(sdl_renderer, winW, winH);
   currentWindowWidth = winW;
   currentWindowHeight = winH;
+#endif
 }
 
 HalDisplay::HalDisplay() {}
@@ -265,6 +363,11 @@ static constexpr const char *WINDOW_TITLE = "Simulator - XTEINK X4";
 #endif
 
 void HalDisplay::begin() {
+#ifdef SIMULATOR_HEADLESS
+  // Nothing to open. Rendering still fills pixelBuf; screenshots come from it.
+  return;
+#else
+
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
     std::cerr << "SDL could not initialize! SDL_Error: " << SDL_GetError()
               << std::endl;
@@ -295,6 +398,7 @@ void HalDisplay::begin() {
   texture = SDL_CreateTexture(sdl_renderer, SDL_PIXELFORMAT_ARGB8888,
                               SDL_TEXTUREACCESS_STREAMING, DISPLAY_WIDTH,
                               DISPLAY_HEIGHT);
+#endif
 }
 
 void HalDisplay::begin(bool /*seamless*/) { begin(); }
@@ -373,6 +477,13 @@ void HalDisplay::presentIfNeeded() {
     return;
   pendingPresent.store(false);
 
+#ifdef SIMULATOR_HEADLESS
+  // No window to present to; the pixels are already in pixelBuf, which is what
+  // saveRendererBmp reads. Screenshots are the entire point of a headless run.
+  if (screenshotDue)
+    captureDueScreenshots();
+  return;
+#else
   if (!texture || !sdl_renderer)
     return;
 
@@ -427,6 +538,7 @@ void HalDisplay::presentIfNeeded() {
     captureDueScreenshots();
   }
   SDL_RenderPresent(sdl_renderer);
+#endif
 }
 
 bool HalDisplay::shouldQuit() const { return quitRequested.load(); }
