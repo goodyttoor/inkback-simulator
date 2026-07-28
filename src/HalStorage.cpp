@@ -443,7 +443,12 @@ bool HalStorage::openFileForRead(const char *moduleName, const String &path,
 }
 bool HalStorage::openFileForWrite(const char *moduleName, const char *path,
                                   HalFile &file) {
-  file = open(path, O_WRONLY | O_CREAT | O_TRUNC);
+  // O_RDWR, not O_WRONLY: the SDK function this stands in for opens
+  // O_RDWR|O_CREAT|O_TRUNC (SDCardManager.cpp), and firmware relies on it.
+  // Section::loadPageDuringBuild reads a finished page back out of the .bin it
+  // is still appending to, through this same handle. With O_WRONLY that read
+  // returns -1 and every long chapter renders blank.
+  file = open(path, O_RDWR | O_CREAT | O_TRUNC);
   return file.isOpen();
 }
 bool HalStorage::openFileForWrite(const char *moduleName,

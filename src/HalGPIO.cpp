@@ -2,7 +2,11 @@
 
 #include <BoardConfig.h>
 #include <GfxRenderer.h>
+#ifdef SIMULATOR_HEADLESS
+#include "SimHeadless.h"
+#else
 #include <SDL.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
