@@ -53,14 +53,31 @@ struct SDL_Event {
   SDL_KeyboardEvent key;
 };
 
-// Milliseconds since the first call, matching SDL_GetTicks()'s contract closely
-// enough for the input script and long-press timing, which are the only
-// consumers.
+// Milliseconds since process start, and NEVER ZERO.
+//
+// Both of those matter, and getting them wrong cost a real bug. HalGPIO stores
+// button press times as `buttonPressTime[i] = SDL_GetTicks()` and then treats
+// ZERO AS A SENTINEL meaning "never pressed":
+//
+//   if (... || buttonPressTime[BTN_POWER] == 0) return 0;   // getPowerButtonHeldTime
+//
+// Real SDL_GetTicks counts from SDL_Init, which happens during display setup —
+// long before any button, so it is comfortably nonzero by then. A lazily
+// initialised epoch is not: the first caller here WAS requestSimulatorSleep(),
+// which stored 0, and the firmware then read that as "power button never
+// pressed" and refused to sleep. check-simulator-sleepwake hung waiting for a
+// sleep that could not happen.
+//
+// So: anchor the epoch at static-init time rather than first use, and clamp the
+// result away from the sentinel.
+inline std::chrono::steady_clock::time_point _headlessEpoch =
+    std::chrono::steady_clock::now();
+
 inline uint32_t SDL_GetTicks() {
-  static const auto start = std::chrono::steady_clock::now();
-  return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                   std::chrono::steady_clock::now() - start)
-                                   .count());
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - _headlessEpoch)
+                      .count();
+  return static_cast<uint32_t>(ms < 1 ? 1 : ms);
 }
 
 inline void SDL_Delay(const uint32_t ms) {
