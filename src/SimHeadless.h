@@ -34,10 +34,23 @@ enum {
   SDL_SCANCODE_DOWN,
   SDL_SCANCODE_P,
   SDL_SCANCODE_S,
+  SDL_SCANCODE_H,  // capacitive Home key, in the X4 Pro touch emulation
   SDL_NUM_SCANCODES
 };
 
-enum { SDL_QUIT = 0x100, SDL_KEYDOWN = 0x300, SDL_KEYUP };
+enum {
+  SDL_QUIT = 0x100,
+  SDL_KEYDOWN = 0x300,
+  SDL_KEYUP,
+  // Touch is emulated with the mouse, so the X4 Pro's GT911 path needs these
+  // even though a headless run never produces one. They exist so the shared
+  // code COMPILES with no SDL; the input script drives everything at runtime.
+  SDL_MOUSEMOTION = 0x400,
+  SDL_MOUSEBUTTONDOWN,
+  SDL_MOUSEBUTTONUP
+};
+
+enum { SDL_BUTTON_LEFT = 1 };
 
 struct SDL_Keysym {
   SDL_Scancode scancode;
@@ -48,9 +61,23 @@ struct SDL_KeyboardEvent {
   SDL_Keysym keysym;
 };
 
+struct SDL_MouseButtonEvent {
+  uint8_t button;
+  int32_t x;
+  int32_t y;
+};
+
+struct SDL_MouseMotionEvent {
+  uint32_t state;
+  int32_t x;
+  int32_t y;
+};
+
 struct SDL_Event {
   uint32_t type;
   SDL_KeyboardEvent key;
+  SDL_MouseButtonEvent button;
+  SDL_MouseMotionEvent motion;
 };
 
 // Milliseconds since process start, and NEVER ZERO.
