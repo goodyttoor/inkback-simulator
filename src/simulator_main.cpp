@@ -4,6 +4,24 @@
 #else
 #include <SDL.h>
 #endif
+
+// LeakSanitizer reports through an atexit hook, and the _exit(0) below skips it
+// deliberately (see the comment there). Without an explicit check, running under
+// ASan with detect_leaks=1 reports NOTHING — not because there are no leaks, but
+// because the process never reaches the hook. That is a silent false clean, so
+// the check is invoked by hand at the one point where it is meaningful: the loop
+// has ended and the display is torn down.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define SIM_HAS_ASAN 1
+#endif
+#elif defined(__SANITIZE_ADDRESS__)
+#define SIM_HAS_ASAN 1
+#endif
+
+#ifdef SIM_HAS_ASAN
+#include <sanitizer/lsan_interface.h>
+#endif
 #include <unistd.h>
 
 #include "Arduino.h"
@@ -43,5 +61,11 @@ int main(int argc, char **argv) {
   // thread is mid-render, the destructor races with the thread → SIGABRT/
   // SIGSEGV → "quit unexpectedly" dialog.  SDL is already torn down above, so
   // calling _exit(0) here is safe.
+#ifdef SIM_HAS_ASAN
+  // Runs the same analysis the end-of-process hook would. Pair it with
+  // exitcode=0 in ASAN_OPTIONS so a leak is REPORTED rather than turned into a
+  // non-zero exit, which the gates would misread as their own assertion failing.
+  __lsan_do_leak_check();
+#endif
   _exit(0);
 }
