@@ -15,6 +15,13 @@
 #define PGM_P const char *
 #define PSTR(s) (s)
 
+// No pins here. Returns 0 = "not pressed" for the X4 Pro's active-low buttons,
+// so the recovery-combo diagnostic in main.cpp logs a consistent released state
+// rather than a floating value that would look like a stuck pin.
+inline int digitalRead(int) { return 0; }
+inline void digitalWrite(int, int) {}
+inline void pinMode(int, int) {}
+
 inline unsigned long millis() {
   using namespace std::chrono;
   static const auto start = steady_clock::now();

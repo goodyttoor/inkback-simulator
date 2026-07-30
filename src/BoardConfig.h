@@ -37,15 +37,32 @@ enum class Board {
   XteinkX4Pro,
 };
 
+// Pin numbers the firmware reads back for diagnostics. The simulator has no
+// pins, so these are the REAL board's numbers carried as data: main.cpp logs
+// them beside the debounced button state so a stuck strap pin is visible in the
+// boot log, and a log line that prints -1 everywhere would hide the very thing
+// it exists to show.
+//
+// -1 means "this board has no such pin", which is also what the SDK uses.
+struct InputPins {
+  int8_t up = -1;
+  int8_t down = -1;
+};
+
 struct BoardProfile {
   Board board;
   const char *name;
+  InputPins input;
 };
 
-inline constexpr BoardProfile XTEINK_X4 = {Board::XteinkX4, "xteink_x4"};
-inline constexpr BoardProfile XTEINK_X3 = {Board::XteinkX3, "xteink_x3"};
+// X4 Pro: BTN_UP is GPIO0 (a boot strap) and BTN_DOWN is GPIO7 — the pair the
+// recovery-mode check reads. The C3 X4's ADC ladder has no discrete pins, so it
+// keeps the -1 default rather than inventing numbers.
+inline constexpr BoardProfile XTEINK_X4 = {Board::XteinkX4, "xteink_x4", {}};
+inline constexpr BoardProfile XTEINK_X3 = {Board::XteinkX3, "xteink_x3", {}};
 inline constexpr BoardProfile XTEINK_X4_PRO = {Board::XteinkX4Pro,
-                                               "xteink_x4_pro"};
+                                               "xteink_x4_pro",
+                                               {0, 7}};
 
 #if defined(SIMULATOR_DEVICE_X4_PRO)
 inline BoardProfile ACTIVE = XTEINK_X4_PRO;
