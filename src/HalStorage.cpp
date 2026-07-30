@@ -116,22 +116,42 @@ public:
 
   bool isDir() const { return dir != nullptr; }
   bool isOpen() const { return fd >= 0 || dir != nullptr; }
+
+  // Release BOTH kinds of handle. See the destructor for why this exists.
+  void release() {
+    if (dir) {
+      closedir(dir);
+      dir = nullptr;
+    }
+    if (fd >= 0) {
+      ::close(fd);
+      fd = -1;
+    }
+  }
 };
 
 HalFile::HalFile() : impl(new Impl()) {}
+
+// Releases BOTH kinds of handle, matching HalFile::close().
+//
+// It used to close only impl->fd and leave impl->dir open, so every HalFile
+// holding a directory leaked its DIR* unless the caller happened to call close()
+// by hand. LeakSanitizer measured 32,816 bytes per opendir, twice per run of the
+// file browser.
+//
+// That is exactly backwards from the contract the firmware is written against:
+// DESTRUCTOR_CLOSES_FILE=1 means callers deliberately do NOT close local
+// handles, because the destructor is supposed to. FileBrowserActivity follows
+// that rule and leaked as a result.
 HalFile::~HalFile() {
-  if (impl && impl->fd >= 0) {
-    ::close(impl->fd);
-    impl->fd = -1;
-  }
+  if (impl)
+    impl->release();
 }
 HalFile::HalFile(HalFile &&other) : impl(std::move(other.impl)) {}
 HalFile &HalFile::operator=(HalFile &&other) {
   if (this != &other) {
-    if (impl && impl->fd >= 0) {
-      ::close(impl->fd);
-      impl->fd = -1;
-    }
+    if (impl)
+      impl->release();
     impl = std::move(other.impl);
   }
   return *this;
