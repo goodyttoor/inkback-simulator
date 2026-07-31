@@ -136,7 +136,7 @@ inline esp_err_t esp_http_client_perform(esp_http_client_handle_t handle) {
   if (!sim_http_fetch::fetch(
           handle->config.url, method, handle->headers, "",
           handle->postField.empty() ? nullptr : handle->postField.c_str(),
-          response))
+          response, handle->config.cert_pem))
     return ESP_FAIL;
 
   handle->statusCode = response.statusCode;
@@ -173,7 +173,7 @@ inline esp_err_t esp_http_client_open(esp_http_client_handle_t handle,
           handle->config.url, methodName(handle->config.method),
           handle->headers, basicAuth,
           handle->postField.empty() ? nullptr : handle->postField.c_str(),
-          response))
+          response, handle->config.cert_pem))
     return ESP_FAIL;
   handle->statusCode = response.statusCode;
   handle->responseBody = std::move(response.body);

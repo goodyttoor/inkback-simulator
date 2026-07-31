@@ -181,18 +181,48 @@ inline bool fetchFromMockRoot(const std::string &url, Response &out) {
   return false;
 }
 
+// Writes `pem` to a temp file and returns its path, so curl can be pointed at
+// it with --cacert. Returns empty on failure; the caller then falls back to
+// curl's own trust store, which is the pre-existing behaviour.
+inline std::string writeTempCaFile(const char *pem) {
+  if (!pem || !*pem)
+    return {};
+  char tmpTemplate[] = "/tmp/crosspoint-sim-ca-XXXXXX";
+  int fd = mkstemp(tmpTemplate);
+  if (fd < 0)
+    return {};
+  const size_t len = std::strlen(pem);
+  const bool ok = write(fd, pem, len) == static_cast<ssize_t>(len);
+  close(fd);
+  if (!ok) {
+    unlink(tmpTemplate);
+    return {};
+  }
+  return std::string(tmpTemplate);
+}
+
 inline bool fetchWithCurl(const std::string &url, const char *method,
                           const std::map<std::string, std::string> &headers,
                           const std::string &basicAuth, const char *body,
-                          Response &out) {
+                          Response &out, const char *caCertPem = nullptr) {
   char tmpTemplate[] = "/tmp/crosspoint-sim-http-XXXXXX";
   int fd = mkstemp(tmpTemplate);
   if (fd < 0)
     return false;
   close(fd);
 
+  // A caller-supplied root REPLACES curl's default store (--cacert, not
+  // --capath), matching esp_http_client: setting cert_pem there means "trust
+  // this issuer", not "trust this issuer as well as the public CAs". Without it
+  // the firmware's TLS trust policy would be untestable here — the shim would
+  // accept whatever curl's own store accepts and ignore what the firmware asked
+  // for, so a gate could never tell a verified fetch from an unverified one.
+  const std::string caFile = writeTempCaFile(caCertPem);
+
   std::string cmd = "curl -L -sS --connect-timeout 10 --max-time 60 -o ";
   cmd += shellQuote(tmpTemplate);
+  if (!caFile.empty())
+    cmd += " --cacert " + shellQuote(caFile);
   cmd += " -w '%{http_code}'";
   if (method && std::string(method) != "GET")
     cmd += " -X " + shellQuote(method);
@@ -208,6 +238,8 @@ inline bool fetchWithCurl(const std::string &url, const char *method,
   FILE *pipe = popen(cmd.c_str(), "r");
   if (!pipe) {
     unlink(tmpTemplate);
+    if (!caFile.empty())
+      unlink(caFile.c_str());
     return false;
   }
 
@@ -222,6 +254,8 @@ inline bool fetchWithCurl(const std::string &url, const char *method,
 
   bool readOk = readFile(tmpTemplate, out.body);
   unlink(tmpTemplate);
+  if (!caFile.empty())
+    unlink(caFile.c_str());
   if (!readOk)
     out.body.clear();
 
@@ -231,13 +265,14 @@ inline bool fetchWithCurl(const std::string &url, const char *method,
 
 inline bool fetch(const std::string &url, const char *method,
                   const std::map<std::string, std::string> &headers,
-                  const std::string &basicAuth, const char *body, Response &out) {
+                  const std::string &basicAuth, const char *body, Response &out,
+                  const char *caCertPem = nullptr) {
   out = Response{};
   if (fetchFromMockRoot(url, out))
     return true;
   if (fetchFromFileUrl(url, out))
     return true;
-  return fetchWithCurl(url, method, headers, basicAuth, body, out);
+  return fetchWithCurl(url, method, headers, basicAuth, body, out, caCertPem);
 }
 
 } // namespace sim_http_fetch
