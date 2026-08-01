@@ -113,6 +113,9 @@ struct SyntheticEvent {
 
 std::vector<SyntheticEvent> syntheticEvents;
 bool syntheticEventsInitialized = false;
+// True when the script uses WAIT. Such a script is a SEQUENCE — see the note
+// above the dispatcher — so it must not be reordered by time.
+bool syntheticSequentialMode = false;
 
 float clamp01(float value) { return std::max(0.0f, std::min(1.0f, value)); }
 
@@ -332,6 +335,7 @@ void initializeSyntheticEvents() {
         SyntheticEvent ev{atMs, SyntheticAction::Wait};
         ev.marker = item.substr(secondColon + 1);
         syntheticEvents.push_back(ev);
+        syntheticSequentialMode = true;
       } else if (key == "QUIT") {
         syntheticEvents.push_back({atMs, SyntheticAction::Quit});
       } else if (key == "S" || key == "SLEEP") {
@@ -379,37 +383,62 @@ void initializeSyntheticEvents() {
     start = end + 1;
   }
 
-  std::sort(syntheticEvents.begin(), syntheticEvents.end(),
+  // Sorting is for ABSOLUTE scripts only. A WAIT script is authored as a
+  // sequence and each time is a delay from the previous step, so reordering
+  // it by time would put every WAIT first and every TAP after — which is
+  // exactly the bug that made WAIT look broken.
+  if (!syntheticSequentialMode)
+    std::sort(syntheticEvents.begin(), syntheticEvents.end(),
             [](const SyntheticEvent &a, const SyntheticEvent &b) {
               return a.atMs < b.atMs;
             });
 }
 
+// TWO SCHEDULING MODELS, chosen by whether the script uses WAIT.
+//
+// ABSOLUTE (no WAIT): every time is milliseconds since boot, events are sorted,
+// and each fires when the clock passes it. Original behaviour; every existing
+// script keeps it exactly.
+//
+// SEQUENTIAL (any WAIT): the script is a sequence. Events fire in the order
+// written and each time is a DELAY FROM THE PREVIOUS STEP, so
+// "0:WAIT:Playing;300:TAP:.." means 300ms after the firmware said Playing.
+// Sorting is skipped in this mode — sorting a sequence by time puts every WAIT
+// first and every TAP after, which is the bug that made WAIT look broken.
 void processSyntheticEvents() {
   initializeSyntheticEvents();
   const unsigned long now = millis();
-  // Everything after an unsatisfied WAIT is pushed back by however long the
-  // wait lasts, so the relative spacing a script asks for is preserved:
-  // "wait for X, then tap 500ms later" means 500ms after X, not after boot.
-  static unsigned long scheduleOffsetMs = 0;
+  // Sequential mode only: when the previous step finished. The next event's
+  // atMs is measured from here rather than from boot.
+  static unsigned long stepBaseMs = 0;
+
   for (auto &event : syntheticEvents) {
     if (event.handled)
       continue;
-    const unsigned long effectiveAt = event.atMs + scheduleOffsetMs;
-    if (effectiveAt > now)
-      break;  // sorted by atMs and the offset is uniform, so nothing later is due
-    if (event.action == SyntheticAction::Wait) {
-      if (!sim_wait::consumeMarker(event.marker)) {
-        // Hold the whole schedule here by keeping this event exactly due, so
-        // the offset grows in step with the clock and nothing behind it fires.
-        scheduleOffsetMs = now - event.atMs;
-        return;
+
+    if (syntheticSequentialMode) {
+      if (event.action == SyntheticAction::Wait) {
+        // Nothing behind this fires until the firmware says the word.
+        if (!sim_wait::consumeMarker(event.marker))
+          return;
+        event.handled = true;
+        stepBaseMs = now;
+        continue;
       }
-      event.handled = true;
+      if (now < stepBaseMs + event.atMs)
+        return;
+      stepBaseMs = now;
+    } else if (event.atMs > now) {
       continue;
     }
+
     event.handled = true;
     switch (event.action) {
+    case SyntheticAction::Wait:
+      // Only reachable in ABSOLUTE mode, where a WAIT cannot appear — the
+      // parser sets sequential mode the moment it sees one. Listed so the
+      // switch stays exhaustive.
+      break;
     case SyntheticAction::KeyDown:
       pressedThisFrame[event.button] = true;
       syntheticButtonDown[event.button] = true;
