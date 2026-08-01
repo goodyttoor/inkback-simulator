@@ -399,7 +399,7 @@ void processSyntheticEvents() {
     if (effectiveAt > now)
       break;  // sorted by atMs and the offset is uniform, so nothing later is due
     if (event.action == SyntheticAction::Wait) {
-      if (!sim_wait::sawMarker(event.marker)) {
+      if (!sim_wait::consumeMarker(event.marker)) {
         // Hold the whole schedule here by keeping this event exactly due, so
         // the offset grows in step with the clock and nothing behind it fires.
         scheduleOffsetMs = now - event.atMs;

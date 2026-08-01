@@ -28,8 +28,14 @@ namespace sim_wait {
 // buffer in a process that can run for minutes is a leak with extra steps.
 void noteOutput(const char *data, size_t len);
 
-// True once `marker` has appeared in anything printed so far.
-bool sawMarker(const std::string &marker);
+// True once `marker` has appeared — and CONSUMES everything up to and including
+// it, so later waits only see output that came afterwards.
+//
+// Consuming is what makes a script a SEQUENCE rather than a set. Without it,
+// "wait for a render to finish" is satisfied forever by the boot screen's
+// render, and every later wait on it passes instantly. With it, the same marker
+// can be used at each step and means "the next one".
+bool consumeMarker(const std::string &marker);
 
 // Test seam: forget everything printed so far.
 void reset();

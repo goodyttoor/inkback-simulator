@@ -36,10 +36,16 @@ void noteOutput(const char *data, const size_t len) {
   }
 }
 
-bool sawMarker(const std::string &marker) {
+bool consumeMarker(const std::string &marker) {
   if (marker.empty()) return true;
   std::lock_guard<std::mutex> guard(lock());
-  return buffer().find(marker) != std::string::npos;
+  std::string &tail = buffer();
+  const size_t at = tail.find(marker);
+  if (at == std::string::npos) return false;
+  // Erase through the match, so the same marker used again means "the next
+  // one" rather than "this one, forever".
+  tail.erase(0, at + marker.size());
+  return true;
 }
 
 void reset() {
