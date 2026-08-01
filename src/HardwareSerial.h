@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <iostream>
 
+#include <cstring>
+
 #include "SimWaitGate.h"
 
 #include "Arduino.h"
@@ -13,7 +15,9 @@ public:
   void begin(unsigned long baud) {}
   void setTxTimeoutMs(uint32_t timeoutMs) {}
   size_t write(uint8_t c) override {
-    std::cerr << (char)c;
+    const char ch = (char)c;
+    sim_wait::noteOutput(&ch, 1);
+    std::cerr << ch;
     return 1;
   }
   size_t write(const uint8_t *buffer, size_t size) override {
@@ -27,12 +31,20 @@ public:
   int available() override { return 0; }
   int read() override { return -1; }
   int peek() override { return -1; }
+  // BOTH branches feed the wait gate. This is the path the LOG_* macros take —
+  // it writes to std::cerr directly rather than through write(), so hooking
+  // only write() left the gate seeing nothing at all and every WAIT hanging
+  // forever. The bug looked exactly like a broken scheduler.
   template <typename... Args> void printf(const char *format, Args... args) {
     if constexpr (sizeof...(Args) == 0) {
+      sim_wait::noteOutput(format, std::strlen(format));
       std::cerr << format;
     } else {
       char buf[256];
-      snprintf(buf, sizeof(buf), format, args...);
+      const int n = snprintf(buf, sizeof(buf), format, args...);
+      if (n > 0) {
+        sim_wait::noteOutput(buf, (size_t)n < sizeof(buf) - 1 ? (size_t)n : sizeof(buf) - 1);
+      }
       std::cerr << buf;
     }
   }
