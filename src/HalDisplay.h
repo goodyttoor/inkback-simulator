@@ -46,6 +46,12 @@ public:
   void waitRefreshComplete();
   bool supportsAsyncRefresh() const;
   void displayWindow(int x, int y, int w, int h);
+  // Whether the SIMULATED panel honours a windowed refresh. On real hardware
+  // this is a property of the controller — SSD1677 implements one, UC8179 and
+  // UC8279 repaint the whole panel — so it is a device trait worth modelling
+  // rather than a fact about the simulator. Set CROSSPOINT_SIM_WINDOW_REFRESH=0
+  // to model a panel without one.
+  bool supportsWindowedRefresh() const;
   void refreshDisplay(RefreshMode mode = RefreshMode::FAST_REFRESH,
                       bool turnOffScreen = false);
 

@@ -473,6 +473,18 @@ void HalDisplay::waitRefreshComplete() {}
 
 bool HalDisplay::supportsAsyncRefresh() const { return false; }
 
+// Defaults to TRUE, modelling an SSD1677 — the one controller that implements a
+// window. That is the optimistic answer on purpose: it keeps the windowed code
+// path exercised by default, and a gate that wants the fallback asks for it.
+//
+// The simulator's displayWindow() below repaints everything either way, because
+// there is no partial refresh to simulate; what is being modelled here is the
+// DECISION, which is the part that was wrong on device.
+bool HalDisplay::supportsWindowedRefresh() const {
+  const char *value = std::getenv("CROSSPOINT_SIM_WINDOW_REFRESH");
+  return value == nullptr || (value[0] != '0' && value[0] != '\0');
+}
+
 void HalDisplay::displayWindow(int, int, int, int) {
   refreshDisplay(RefreshMode::FAST_REFRESH, false);
 }
