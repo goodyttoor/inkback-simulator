@@ -1,5 +1,7 @@
 #include "HalGPIO.h"
 
+#include "SimWaitGate.h"
+
 #include <BoardConfig.h>
 #include <GfxRenderer.h>
 #ifdef SIMULATOR_HEADLESS
@@ -84,6 +86,8 @@ bool homeKeyLongFired = false;
 unsigned long homeKeyPressedAt = 0;
 
 enum class SyntheticAction {
+  // Block the rest of the schedule until a marker appears in the log.
+  Wait,
   KeyDown,
   KeyUp,
   TouchDown,
@@ -101,6 +105,10 @@ struct SyntheticEvent {
   float logicalNx = 0.0f;
   float logicalNy = 0.0f;
   bool handled = false;
+  // Non-empty only for SyntheticAction::Wait. LAST so every existing
+  // brace-initialiser — {atMs, SyntheticAction::Quit} and friends — keeps
+  // working unchanged.
+  std::string marker;
 };
 
 std::vector<SyntheticEvent> syntheticEvents;
@@ -317,7 +325,14 @@ void initializeSyntheticEvents() {
           item.substr(firstColon + 1, secondColon == std::string::npos
                                           ? std::string::npos
                                           : secondColon - firstColon - 1));
-      if (key == "QUIT") {
+      if (key == "WAIT" && secondColon != std::string::npos) {
+        // Everything after the second colon is the marker, verbatim — it may
+        // itself contain colons ("Entering activity: Home"), so this must not
+        // be split further.
+        SyntheticEvent ev{atMs, SyntheticAction::Wait};
+        ev.marker = item.substr(secondColon + 1);
+        syntheticEvents.push_back(ev);
+      } else if (key == "QUIT") {
         syntheticEvents.push_back({atMs, SyntheticAction::Quit});
       } else if (key == "S" || key == "SLEEP") {
         syntheticEvents.push_back({atMs, SyntheticAction::Sleep});
@@ -373,9 +388,26 @@ void initializeSyntheticEvents() {
 void processSyntheticEvents() {
   initializeSyntheticEvents();
   const unsigned long now = millis();
+  // Everything after an unsatisfied WAIT is pushed back by however long the
+  // wait lasts, so the relative spacing a script asks for is preserved:
+  // "wait for X, then tap 500ms later" means 500ms after X, not after boot.
+  static unsigned long scheduleOffsetMs = 0;
   for (auto &event : syntheticEvents) {
-    if (event.handled || event.atMs > now)
+    if (event.handled)
       continue;
+    const unsigned long effectiveAt = event.atMs + scheduleOffsetMs;
+    if (effectiveAt > now)
+      break;  // sorted by atMs and the offset is uniform, so nothing later is due
+    if (event.action == SyntheticAction::Wait) {
+      if (!sim_wait::sawMarker(event.marker)) {
+        // Hold the whole schedule here by keeping this event exactly due, so
+        // the offset grows in step with the clock and nothing behind it fires.
+        scheduleOffsetMs = now - event.atMs;
+        return;
+      }
+      event.handled = true;
+      continue;
+    }
     event.handled = true;
     switch (event.action) {
     case SyntheticAction::KeyDown:

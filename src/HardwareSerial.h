@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <iostream>
 
+#include "SimWaitGate.h"
+
 #include "Arduino.h"
 #include "Print.h"
 #include "Stream.h"
@@ -15,6 +17,10 @@ public:
     return 1;
   }
   size_t write(const uint8_t *buffer, size_t size) override {
+    // Every byte the firmware prints also goes to the wait gate, so an input
+    // script can block on something the firmware SAID rather than on a
+    // millisecond guess. See SimWaitGate.h.
+    sim_wait::noteOutput((const char *)buffer, size);
     std::cerr.write((const char *)buffer, size);
     return size;
   }
