@@ -243,8 +243,13 @@ struct IoStats {
   unsigned long reads = 0;
   unsigned long long bytes = 0;
   bool enabled = std::getenv("INKBACK_SIM_IO_STATS") != nullptr;
-  ~IoStats() {
-    if (enabled) {
+  // Reported as a RUNNING TOTAL rather than once at exit. The destructor never
+  // fired: the simulator's QUIT does not leave main by returning, so a
+  // report-at-teardown printed nothing at all and looked exactly like a
+  // subsystem that was never called.
+  void note() {
+    if (!enabled) return;
+    if ((opens + reads) % 100 == 0) {
       fprintf(stderr, "[SIM-IO] opens=%lu reads=%lu bytes=%llu\n", opens, reads, bytes);
     }
   }
@@ -256,7 +261,9 @@ IoStats &ioStats() {
 }  // namespace
 
 void halStorageMarkOpen() {
-  if (ioStats().enabled) ioStats().opens++;
+  if (!ioStats().enabled) return;
+  ioStats().opens++;
+  ioStats().note();
 }
 
 int HalFile::read(void *buf, size_t count) {
@@ -266,6 +273,7 @@ int HalFile::read(void *buf, size_t count) {
   if (ioStats().enabled && n > 0) {
     ioStats().reads++;
     ioStats().bytes += static_cast<unsigned long long>(n);
+    ioStats().note();
   }
   return (int)n;
 }
@@ -273,6 +281,7 @@ int HalFile::read() {
   if (ioStats().enabled) {
     ioStats().reads++;
     ioStats().bytes += 1;
+    ioStats().note();
   }
   if (!impl || impl->fd < 0)
     return -1;
