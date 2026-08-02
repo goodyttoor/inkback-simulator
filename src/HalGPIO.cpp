@@ -85,9 +85,15 @@ bool homeKeyLongPressedThisFrame = false;
 bool homeKeyLongFired = false;
 unsigned long homeKeyPressedAt = 0;
 
+// Defined in HalDisplay.cpp; the SHOT verb below hands it a path.
+void simRequestScreenshotNow(const std::string &path);
+
 enum class SyntheticAction {
   // Block the rest of the schedule until a marker appears in the log.
   Wait,
+  // Capture a screenshot at the moment this step is reached, rather than at a
+  // wall-clock deadline chosen in advance. Path goes in `marker`.
+  Shot,
   KeyDown,
   KeyUp,
   TouchDown,
@@ -105,7 +111,7 @@ struct SyntheticEvent {
   float logicalNx = 0.0f;
   float logicalNy = 0.0f;
   bool handled = false;
-  // Non-empty only for SyntheticAction::Wait. LAST so every existing
+  // The marker for Wait, or the output path for Shot. LAST so every existing
   // brace-initialiser — {atMs, SyntheticAction::Quit} and friends — keeps
   // working unchanged.
   std::string marker;
@@ -336,6 +342,12 @@ void initializeSyntheticEvents() {
         ev.marker = item.substr(secondColon + 1);
         syntheticEvents.push_back(ev);
         syntheticSequentialMode = true;
+      } else if (key == "SHOT" && secondColon != std::string::npos) {
+        // Everything after the second colon is the path, verbatim.
+        SyntheticEvent ev{atMs, SyntheticAction::Shot};
+        ev.marker = item.substr(secondColon + 1);
+        syntheticEvents.push_back(ev);
+        syntheticSequentialMode = true;
       } else if (key == "QUIT") {
         syntheticEvents.push_back({atMs, SyntheticAction::Quit});
       } else if (key == "S" || key == "SLEEP") {
@@ -465,6 +477,12 @@ void processSyntheticEvents() {
       break;
     case SyntheticAction::Sleep:
       requestSimulatorSleep();
+      break;
+    case SyntheticAction::Shot:
+      // Queued for the display's next capture pass rather than written here:
+      // the framebuffer belongs to the render side, and this runs on the input
+      // side. Same path the scheduled form takes, only with "now" as the time.
+      simRequestScreenshotNow(event.marker);
       break;
     case SyntheticAction::Quit:
       quitRequested.store(true);

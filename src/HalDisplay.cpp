@@ -96,6 +96,22 @@ void initializeScreenshotEvents() {
   }
 }
 
+}  // namespace
+
+// Queue a screenshot for RIGHT NOW, from the input script's SHOT verb.
+//
+// The scheduled form takes an absolute millisecond, which is fine when a script
+// is itself a wall-clock schedule and wrong once navigation became event-driven:
+// the moment a screen is ready then depends on how fast the machine is, so every
+// gate had to pick a deadline late enough for the slowest case and hold the run
+// open until it passed. That padding was most of the suite's runtime.
+void simRequestScreenshotNow(const std::string &path) {
+  initializeScreenshotEvents();
+  screenshotEvents.push_back({millis(), path});
+}
+
+namespace {
+
 bool hasDueScreenshot() {
   initializeScreenshotEvents();
   const unsigned long now = millis();
