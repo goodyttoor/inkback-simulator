@@ -61,6 +61,12 @@ static unsigned long buttonPressTime[NUM_BUTTONS] = {};
 static bool syntheticButtonDown[NUM_BUTTONS] = {};
 static bool simulatorSleepRequested = false;
 
+// Defined in HalDisplay.cpp at file scope; the SHOT verb hands it a path.
+// Declared out here deliberately — inside the anonymous namespace below it
+// would declare a DIFFERENT function with internal linkage, which compiles
+// cleanly and fails at link.
+void simRequestScreenshotNow(const std::string &path);
+
 namespace {
 
 struct TouchState {
@@ -84,9 +90,6 @@ bool homeKeyTappedThisFrame = false;
 bool homeKeyLongPressedThisFrame = false;
 bool homeKeyLongFired = false;
 unsigned long homeKeyPressedAt = 0;
-
-// Defined in HalDisplay.cpp; the SHOT verb below hands it a path.
-void simRequestScreenshotNow(const std::string &path);
 
 enum class SyntheticAction {
   // Block the rest of the schedule until a marker appears in the log.
