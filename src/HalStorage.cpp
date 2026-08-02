@@ -13,6 +13,10 @@
 #include <sstream>
 #include <vector>
 
+// Defined below with the IO accounting; declared here because the open site
+// comes first in this file.
+void halStorageMarkOpen();
+
 HalStorage HalStorage::instance;
 HalStorage::HalStorage() {}
 
@@ -101,6 +105,7 @@ public:
     // oflag_t, so all O_* constants are already native POSIX values — pass them
     // straight through.
     fd = ::open(path.c_str(), flags, 0666);
+    if (fd >= 0) halStorageMarkOpen();
     if (fd < 0) {
       fprintf(stderr, "[SIM] open failed: %s (flags=0x%x errno=%d %s)\n",
               path.c_str(), flags, errno, strerror(errno));
@@ -223,13 +228,52 @@ size_t HalFile::position() const {
   off_t pos = lseek(impl->fd, 0, SEEK_CUR);
   return pos < 0 ? 0 : (size_t)pos;
 }
+// STORAGE ACCOUNTING, for sizing a decision this simulator cannot make itself.
+//
+// The question is whether holding EPUB sections in PSRAM would meaningfully cut
+// page-turn latency on the X4 Pro. Wall-clock here says nothing — the host's
+// page cache is orders of magnitude faster than an SD card over SPI. What DOES
+// transfer is the COUNT: how many reads and how many bytes a page turn asks the
+// card for. That number is the same on both.
+//
+// Off unless INKBACK_SIM_IO_STATS is set, printed at exit.
+namespace {
+struct IoStats {
+  unsigned long opens = 0;
+  unsigned long reads = 0;
+  unsigned long long bytes = 0;
+  bool enabled = std::getenv("INKBACK_SIM_IO_STATS") != nullptr;
+  ~IoStats() {
+    if (enabled) {
+      fprintf(stderr, "[SIM-IO] opens=%lu reads=%lu bytes=%llu\n", opens, reads, bytes);
+    }
+  }
+};
+IoStats &ioStats() {
+  static IoStats s;
+  return s;
+}
+}  // namespace
+
+void halStorageMarkOpen() {
+  if (ioStats().enabled) ioStats().opens++;
+}
+
 int HalFile::read(void *buf, size_t count) {
   if (!impl || impl->fd < 0)
     return -1;
   ssize_t n = ::read(impl->fd, buf, count);
+  if (ioStats().enabled && n > 0) {
+    ioStats().reads++;
+    ioStats().bytes += static_cast<unsigned long long>(n);
+  }
   return (int)n;
 }
 int HalFile::read() {
+  if (ioStats().enabled) {
+    ioStats().reads++;
+    ioStats().bytes += 1;
+  }
   if (!impl || impl->fd < 0)
     return -1;
   uint8_t c;
