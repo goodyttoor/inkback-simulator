@@ -49,6 +49,15 @@ struct ESPMock {
   uint32_t getHeapSize() { return 1024 * 1024; }
   uint32_t getMinFreeHeap() { return 1024 * 1024; }
   uint32_t getMaxAllocHeap() { return 1024 * 1024; }
+  // PSRAM: ZERO, because this simulator has none. Firmware that reports PSRAM
+  // guards on getPsramSize() > 0, so returning zero makes that guard false and
+  // the block compiles here without pretending to a pool that does not exist.
+  // Reporting a fake size would be worse than not having these at all: it would
+  // make a PSRAM regression look fine on the desktop.
+  uint32_t getPsramSize() { return 0; }
+  uint32_t getFreePsram() { return 0; }
+  uint32_t getMinFreePsram() { return 0; }
+  uint32_t getMaxAllocPsram() { return 0; }
 };
 extern ESPMock ESP;
 
