@@ -16,6 +16,7 @@
 // Defined below with the IO accounting; declared here because the open site
 // comes first in this file.
 void halStorageMarkOpen();
+void halStorageNoteRead(size_t bytes);
 
 HalStorage HalStorage::instance;
 HalStorage::HalStorage() {}
@@ -99,6 +100,50 @@ public:
   std::string path;
   DIR *dir = nullptr;
 
+  // READ-AHEAD BUFFER, mirroring lib/hal/HalStorage.cpp on the device.
+  //
+  // Duplicated deliberately, not shared: the simulator reimplements HalStorage
+  // against POSIX and the device implements it against SdFat, so there is no
+  // common file to put this in. Buffering here buys no speed — the host page
+  // cache is already faster than any card — but it is the ONLY way the logic is
+  // ever exercised. Every simulator gate reads through this, so a bug in the
+  // position/seek/write interaction shows up in the EPUB corpus rather than on
+  // a device nobody has yet.
+  //
+  // Invariant: when bytes are buffered, the fd is AHEAD of the caller's logical
+  // position by exactly (bufLen - bufPos).
+  static constexpr size_t kBufBytes = 512;
+  uint8_t buf[kBufBytes] = {};
+  size_t bufLen = 0;
+  size_t bufPos = 0;
+
+  size_t buffered() const { return bufLen - bufPos; }
+
+  void dropBuffer() {
+    bufLen = 0;
+    bufPos = 0;
+  }
+
+  // Put the fd back where the caller thinks it is, then drop the buffer.
+  void syncDown() {
+    const size_t ahead = buffered();
+    dropBuffer();
+    if (ahead > 0 && fd >= 0)
+      lseek(fd, -static_cast<off_t>(ahead), SEEK_CUR);
+  }
+
+  size_t refill() {
+    dropBuffer();
+    if (fd < 0)
+      return 0;
+    const ssize_t n = ::read(fd, buf, kBufBytes);
+    if (n > 0) {
+      bufLen = static_cast<size_t>(n);
+      halStorageNoteRead(bufLen);
+    }
+    return bufLen;
+  }
+
   bool open(const char *p, int flags) {
     path = p;
     // The simulator's FsApiConstants.h just includes <fcntl.h> and typedef int
@@ -163,8 +208,10 @@ HalFile &HalFile::operator=(HalFile &&other) {
 }
 
 void HalFile::flush() {
-  if (impl && impl->fd >= 0)
+  if (impl && impl->fd >= 0) {
+    impl->syncDown();
     fsync(impl->fd);
+  }
 }
 bool HalFile::sync() {
   if (!impl || impl->fd < 0)
@@ -192,26 +239,29 @@ size_t HalFile::size() {
 }
 size_t HalFile::fileSize() { return size(); }
 uint64_t HalFile::fileSize64() { return size(); }
-bool HalFile::seek(size_t pos) {
-  if (!impl || impl->fd < 0)
-    return false;
-  return lseek(impl->fd, (off_t)pos, SEEK_SET) >= 0;
-}
+// SEEKS drop the buffer. seekCur is relative to the CALLER's position, which is
+// behind the fd's whenever anything is buffered, so it is resolved against
+// position() and reissued absolute rather than passed through.
+bool HalFile::seek(size_t pos) { return seekSet(pos); }
 bool HalFile::seek64(uint64_t pos) {
   if (!impl || impl->fd < 0)
     return false;
   if (pos > static_cast<uint64_t>(std::numeric_limits<off_t>::max()))
     return false;
+  impl->dropBuffer();
   return lseek(impl->fd, static_cast<off_t>(pos), SEEK_SET) >= 0;
 }
 bool HalFile::seekCur(int64_t offset) {
   if (!impl || impl->fd < 0)
     return false;
-  return lseek(impl->fd, (off_t)offset, SEEK_CUR) >= 0;
+  const off_t here = lseek(impl->fd, 0, SEEK_CUR) - static_cast<off_t>(impl->buffered());
+  impl->dropBuffer();
+  return lseek(impl->fd, here + static_cast<off_t>(offset), SEEK_SET) >= 0;
 }
 bool HalFile::seekSet(size_t offset) {
   if (!impl || impl->fd < 0)
     return false;
+  impl->dropBuffer();
   return lseek(impl->fd, (off_t)offset, SEEK_SET) >= 0;
 }
 int HalFile::available() const {
@@ -220,13 +270,20 @@ int HalFile::available() const {
   off_t cur = lseek(impl->fd, 0, SEEK_CUR);
   off_t end = lseek(impl->fd, 0, SEEK_END);
   lseek(impl->fd, cur, SEEK_SET);
-  return (int)(end - cur);
+  // Plus whatever is sitting unread in the buffer: the web server and WebDAV
+  // stream on while (file.available()), and would stop short without it.
+  return (int)(end - cur) + static_cast<int>(impl->buffered());
 }
 size_t HalFile::position() const {
   if (!impl || impl->fd < 0)
     return 0;
   off_t pos = lseek(impl->fd, 0, SEEK_CUR);
-  return pos < 0 ? 0 : (size_t)pos;
+  if (pos < 0)
+    return 0;
+  // Minus the read-ahead: DictZip does seekSet(position() + subLen), which
+  // would skip past real data if this reported where the fd happens to be.
+  const size_t ahead = impl->buffered();
+  return static_cast<size_t>(pos) < ahead ? 0 : static_cast<size_t>(pos) - ahead;
 }
 // STORAGE ACCOUNTING, for sizing a decision this simulator cannot make itself.
 //
@@ -266,31 +323,68 @@ void halStorageMarkOpen() {
   ioStats().note();
 }
 
+void halStorageNoteRead(const size_t bytes) {
+  if (!ioStats().enabled) return;
+  ioStats().reads++;
+  ioStats().bytes += static_cast<unsigned long long>(bytes);
+  ioStats().note();
+}
+
 int HalFile::read(void *buf, size_t count) {
   if (!impl || impl->fd < 0)
     return -1;
-  ssize_t n = ::read(impl->fd, buf, count);
-  if (ioStats().enabled && n > 0) {
-    ioStats().reads++;
-    ioStats().bytes += static_cast<unsigned long long>(n);
-    ioStats().note();
+  if (count == 0)
+    return 0;
+  auto *out = static_cast<uint8_t *>(buf);
+  size_t done = 0;
+
+  const size_t fromBuf =
+      impl->buffered() < count ? impl->buffered() : count;
+  if (fromBuf > 0) {
+    memcpy(out, impl->buf + impl->bufPos, fromBuf);
+    impl->bufPos += fromBuf;
+    done += fromBuf;
   }
-  return (int)n;
+  if (done == count)
+    return static_cast<int>(done);
+
+  // A request at least as large as the buffer goes straight through: buffering
+  // it would copy every byte twice to save nothing.
+  const size_t remaining = count - done;
+  if (remaining >= HalFile::Impl::kBufBytes) {
+    const ssize_t n = ::read(impl->fd, out + done, remaining);
+    if (n > 0) {
+      halStorageNoteRead(static_cast<size_t>(n));
+      done += static_cast<size_t>(n);
+    }
+    return done > 0 ? static_cast<int>(done) : static_cast<int>(n);
+  }
+
+  if (impl->refill() == 0)
+    return done > 0 ? static_cast<int>(done) : 0;
+  const size_t take =
+      impl->buffered() < remaining ? impl->buffered() : remaining;
+  memcpy(out + done, impl->buf + impl->bufPos, take);
+  impl->bufPos += take;
+  done += take;
+  return static_cast<int>(done);
 }
+// The single-byte read is what readPod() multiplies into hundreds of calls, so
+// it is the one that most wants to hit RAM.
 int HalFile::read() {
-  if (ioStats().enabled) {
-    ioStats().reads++;
-    ioStats().bytes += 1;
-    ioStats().note();
-  }
   if (!impl || impl->fd < 0)
     return -1;
-  uint8_t c;
-  return (::read(impl->fd, &c, 1) == 1) ? c : -1;
+  if (impl->bufPos >= impl->bufLen && impl->refill() == 0)
+    return -1;
+  return impl->buf[impl->bufPos++];
 }
+// WRITES sync down first. The fd is ahead while anything is buffered, so
+// writing without rewinding would put the bytes past where the caller believes
+// the cursor is — silent corruption rather than an error.
 size_t HalFile::write(const void *buf, size_t count) {
   if (!impl || impl->fd < 0)
     return 0;
+  impl->syncDown();
   ssize_t n = ::write(impl->fd, buf, count);
   return n < 0 ? 0 : (size_t)n;
 }
@@ -300,6 +394,7 @@ size_t HalFile::write(const uint8_t *buf, size_t count) {
 size_t HalFile::write(uint8_t b) {
   if (!impl || impl->fd < 0)
     return 0;
+  impl->syncDown();
   return (::write(impl->fd, &b, 1) == 1) ? 1 : 0;
 }
 bool HalFile::rename(const char *newPath) {
@@ -322,6 +417,9 @@ void HalFile::rewindDirectory() {
 bool HalFile::close() {
   if (!impl)
     return true;
+  // Drop, not syncDown: nothing reads this handle again, and seeking a file we
+  // are about to close is work for no one's benefit.
+  impl->dropBuffer();
   if (impl->dir) {
     closedir(impl->dir);
     impl->dir = nullptr;
