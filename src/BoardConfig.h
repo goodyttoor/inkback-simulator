@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Keep the small portion of the FreeInk BoardConfig surface used outside the
 // device HAL available without pulling ESP32-only GPIO headers into the native
 // build. Device selection is compile-time in the simulator, matching the
@@ -49,10 +51,23 @@ struct InputPins {
   int8_t down = -1;
 };
 
+// Bezel overlap: how much of the panel the case covers on each edge, so UI can
+// keep away from glass a finger cannot comfortably reach. Defaults mirror the
+// SDK's (top 9, sides and bottom 3) — the simulator has no bezel, but the
+// firmware reads these unconditionally and the numbers must agree or layout
+// differs between the simulator and the device for no visible reason.
+struct ViewableInsets {
+  uint8_t top = 9;
+  uint8_t right = 3;
+  uint8_t bottom = 3;
+  uint8_t left = 3;
+};
+
 struct BoardProfile {
   Board board;
   const char *name;
   InputPins input;
+  ViewableInsets viewableInsets = {};
 };
 
 // X4 Pro: BTN_UP is GPIO0 (a boot strap) and BTN_DOWN is GPIO7 — the pair the

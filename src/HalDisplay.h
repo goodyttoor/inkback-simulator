@@ -51,6 +51,11 @@ public:
   // UC8279 repaint the whole panel — so it is a device trait worth modelling
   // rather than a fact about the simulator. Set CROSSPOINT_SIM_WINDOW_REFRESH=0
   // to model a panel without one.
+  // Whether the panel folds the grayscale base into the gray activation
+  // (SSD1683). The simulator composites in software and has no such staging, so
+  // the reader takes its ordinary AA path — false is the accurate answer here,
+  // not a stub.
+  bool combinesGrayscaleBase() const { return false; }
   bool supportsWindowedRefresh() const;
   void refreshDisplay(RefreshMode mode = RefreshMode::FAST_REFRESH,
                       bool turnOffScreen = false);

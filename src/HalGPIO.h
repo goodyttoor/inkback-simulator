@@ -77,6 +77,17 @@ public:
   bool wasTouchReleased() const;
   bool isTouchTapCandidate(float &nx, float &ny, unsigned long &heldMs) const;
   bool isTouchHeldAt(float &nx, float &ny) const;
+  // One-shot long-press, fired while the finger is STILL DOWN once a stationary
+  // contact passes the threshold. Position is the touch-down point, not where
+  // the finger is now. Mirrors the device HAL, which gets this from the SDK's
+  // input classifier; here it is derived from the contact state the simulator
+  // already tracks.
+  bool wasTouchLongPress(float &nx, float &ny) const;
+  // Ignore the rest of the current contact — its continued hold and its release
+  // edge. Self-clears when the contact ends, so the next touch is delivered
+  // normally. Callers that act on a long-press use this so the lift cannot also
+  // register as a tap.
+  void suppressTouchContact();
   unsigned long lastTouchHeldMs() const;
   bool wasSwipe(float &nxStart, float &nyStart, float &nxEnd,
                 float &nyEnd) const;

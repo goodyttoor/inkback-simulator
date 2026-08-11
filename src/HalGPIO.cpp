@@ -81,7 +81,18 @@ struct TouchState {
   float currentNy = 0.0f;
   unsigned long pressedAt = 0;
   unsigned long lastHeldMs = 0;
+  // One-shot per contact: wasTouchLongPress() reports true exactly once, and
+  // polling it again during the same hold returns false.
+  bool longPressReported = false;
+  // Set by suppressTouchContact(); cleared when the contact ends.
+  bool suppressed = false;
 };
+
+// Matches InputManager::TOUCH_LONG_PRESS_MS in the SDK. Restated rather than
+// included because the simulator does not link the SDK's input classifier — if
+// the two ever disagree, a long-press fires at a different time here than on
+// the device, which is exactly the kind of drift a gate would not catch.
+constexpr unsigned long kTouchLongPressMs = 500;
 
 TouchState touchState;
 bool homeKeyDown = false;
@@ -187,6 +198,10 @@ void beginTouch(float logicalNx, float logicalNy) {
   touchState.pressedThisFrame = true;
   touchState.activityThisFrame = true;
   touchState.movedBeyondTapSlop = false;
+  // A new contact starts clean: the previous one's long-press latch and
+  // suppression must not carry into it.
+  touchState.longPressReported = false;
+  touchState.suppressed = false;
   touchState.startNx = panelNx;
   touchState.startNy = panelNy;
   touchState.currentNx = panelNx;
@@ -721,8 +736,30 @@ bool HalGPIO::wasTouchDown(float &nx, float &ny) const {
 
 bool HalGPIO::wasTouchReleased() const { return touchState.releasedThisFrame; }
 
+bool HalGPIO::wasTouchLongPress(float &nx, float &ny) const {
+  if (!touchState.down || touchState.movedBeyondTapSlop ||
+      touchState.suppressed || touchState.longPressReported) {
+    return false;
+  }
+  if (SDL_GetTicks() - touchState.pressedAt < kTouchLongPressMs) {
+    return false;
+  }
+  // const in the header to match the device HAL; the latch is the only thing
+  // mutated, and it is what makes this one-shot.
+  touchState.longPressReported = true;
+  nx = touchState.startNx;
+  ny = touchState.startNy;
+  return true;
+}
+
+void HalGPIO::suppressTouchContact() { touchState.suppressed = true; }
+
 bool HalGPIO::isTouchTapCandidate(float &nx, float &ny,
                                   unsigned long &heldMs) const {
+  if (touchState.suppressed) {
+    heldMs = 0;
+    return false;
+  }
   if (!touchState.down || touchState.movedBeyondTapSlop) {
     heldMs = 0;
     return false;
