@@ -33,6 +33,16 @@ public:
   // Should be called inside main loop() to handle the currentLockMode
   void startDeepSleep(HalGPIO &gpio) const;
 
+  // Main loop parked on a render, added for X4 Pro Beta 20.
+  //
+  // On device these set a flag the e-ink BUSY-wait slice hook reads: while the
+  // main loop is blocked in requestUpdateAndWait() it cannot poll input, so the
+  // hook must not yield to it. NO-OPS HERE ON PURPOSE — the simulator has no
+  // light sleep and no BUSY pin, so there is no slice hook to inform and no
+  // behaviour to reproduce. They exist so ActivityManager compiles unchanged.
+  void noteRenderWaitBegin() {}
+  void noteRenderWaitEnd() {}
+
   // Get battery percentage (range 0-100)
   uint16_t getBatteryPercentage() const;
 
