@@ -104,6 +104,16 @@ public:
 private:
   EInkDisplay einkDisplay;
   bool inverted = false;
+
+  // E-ink BUSY-wait slice hook, added for X4 Pro Beta 20.
+  //
+  // On device the driver calls this repeatedly while polling the panel's BUSY
+  // pin, letting the power manager light-sleep through a 0.3-2 s wait. ACCEPTED
+  // AND DISCARDED here: the simulator has no BUSY pin and its "refresh" returns
+  // immediately, so a hook would never be called. Stored nowhere on purpose —
+  // keeping the pointer would imply it might fire.
+  void setBusyWaitSliceHook(bool (*)(int8_t busyPin, uint8_t busyLevel)) {}
+
 };
 
 extern HalDisplay display;

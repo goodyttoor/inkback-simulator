@@ -33,13 +33,28 @@ public:
   // Should be called inside main loop() to handle the currentLockMode
   void startDeepSleep(HalGPIO &gpio) const;
 
-  // Main loop parked on a render, added for X4 Pro Beta 20.
+  // The light-sleep surface X4 Pro Beta 20 expects. NONE OF IT IS SIMULATED.
   //
-  // On device these set a flag the e-ink BUSY-wait slice hook reads: while the
-  // main loop is blocked in requestUpdateAndWait() it cannot poll input, so the
-  // hook must not yield to it. NO-OPS HERE ON PURPOSE — the simulator has no
-  // light sleep and no BUSY pin, so there is no slice hook to inform and no
-  // behaviour to reproduce. They exist so ActivityManager compiles unchanged.
+  // On device these coordinate light sleep with e-ink refreshes: the driver
+  // calls onEinkBusyWaitSlice() while polling the panel's BUSY pin so a 0.3-2 s
+  // wait can be slept through, and the two noteRenderWait* calls tell it the
+  // main loop is parked in requestUpdateAndWait() and cannot poll input
+  // meanwhile. The simulator has no BUSY pin, no light sleep and an immediate
+  // refresh, so there is nothing to reproduce — these exist so main.cpp and
+  // ActivityManager compile unchanged, and are deliberately inert rather than
+  // approximated.
+
+  // Idle threshold before the device light-sleeps between input polls. Kept at
+  // the device value so a gate asserting on timing sees the same number.
+  static constexpr unsigned long IDLE_LIGHT_SLEEP_MS = 1000;
+
+  // Returns true on device when the slice actually slept. Always false here:
+  // claiming a sleep happened would make the caller skip its own polling.
+  bool onEinkBusyWaitSlice(int8_t, uint8_t) { return false; }
+
+  // Bumped once per main-loop body on device, read by the render task.
+  void noteMainLoopIteration() {}
+
   void noteRenderWaitBegin() {}
   void noteRenderWaitEnd() {}
 

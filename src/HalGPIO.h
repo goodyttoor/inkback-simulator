@@ -106,6 +106,13 @@ public:
   // Check if USB is connected
   bool isUsbConnected() const;
 
+  // Sample USB state without a full input update, added for X4 Pro Beta 20.
+  // On device setup() calls this before the first e-ink refresh so the SOF
+  // verdict is settled and light-sleep slices cannot kill a live CDC link.
+  // NO-OP HERE: the simulator has no USB, and isUsbConnected() below is already
+  // a constant, so there is no state to sample.
+  void pollUsbState() {}
+
   // Returns true once per edge (plug or unplug) since the last update()
   bool wasUsbStateChanged() const;
 
