@@ -113,6 +113,12 @@ public:
   // a constant, so there is no state to sample.
   void pollUsbState() {}
 
+  // True on device while a raw button change is still inside the debounce
+  // window, so the idle loop polls fast instead of sleeping a slice. ALWAYS
+  // FALSE here: simulator input is scripted and commits immediately, so there
+  // is never a half-committed press to wait for.
+  bool isDebouncePending() const { return false; }
+
   // Returns true once per edge (plug or unplug) since the last update()
   bool wasUsbStateChanged() const;
 

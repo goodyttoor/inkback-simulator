@@ -48,6 +48,15 @@ public:
   // the device value so a gate asserting on timing sees the same number.
   static constexpr unsigned long IDLE_LIGHT_SLEEP_MS = 1000;
 
+  // Idle threshold before the device downclocks. Device value, as above.
+  static constexpr unsigned long IDLE_DOWNCLOCK_MS = 500;
+
+  // Returns true on device when the loop actually light-slept. ALWAYS FALSE
+  // here, and that is the useful answer rather than a cop-out: false means
+  // "declined", which sends main.cpp down its 100 Hz delayWallClock() fallback
+  // — the polling cadence the simulator wants anyway.
+  bool lightSleep(const HalGPIO&) const { return false; }
+
   // Returns true on device when the slice actually slept. Always false here:
   // claiming a sleep happened would make the caller skip its own polling.
   bool onEinkBusyWaitSlice(int8_t, uint8_t) { return false; }

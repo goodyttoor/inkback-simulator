@@ -101,10 +101,6 @@ public:
   // Simulator only: returns true once a hard shutdown has been requested.
   bool shouldQuit() const;
 
-private:
-  EInkDisplay einkDisplay;
-  bool inverted = false;
-
   // E-ink BUSY-wait slice hook, added for X4 Pro Beta 20.
   //
   // On device the driver calls this repeatedly while polling the panel's BUSY
@@ -114,6 +110,9 @@ private:
   // keeping the pointer would imply it might fire.
   void setBusyWaitSliceHook(bool (*)(int8_t busyPin, uint8_t busyLevel)) {}
 
+private:
+  EInkDisplay einkDisplay;
+  bool inverted = false;
 };
 
 extern HalDisplay display;
